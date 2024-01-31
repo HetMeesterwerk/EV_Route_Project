@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EV Route Optimization</title>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='styles.css') }}">
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=Google Key Blocked&libraries=geometry&callback=initMap"></script>
+</head>
+<body>
+    <h1>EV Route Optimization</h1>
+    <div id="content">
+        <div id="map-container">
+            <div id="map" style="width: 100%; height: 90%;"></div>
+            <div id="legend">
+                <div class="legend-item">
+                    <img src="{{ url_for('static', filename='ev_stat_old.png') }}" alt="Charging Station Icon" width="24" height="24">
+                    <span>Charging Station</span>
+                </div>
+                <div class="legend-item">
+                    <img src="{{ url_for('static', filename='warehouse.png') }}" alt="Warehouse Icon" width="24" height="24">
+                    <span>Warehouse</span>
+                </div>
+                <div class="legend-item">
+                    <img src="{{ url_for('static', filename='customer.png') }}" alt="Customer Icon" width="24" height="24">
+                    <span>Customer</span>
+                </div>
+                <div class="legend-item">
+                    <img src="{{ url_for('static', filename='temperature.png') }}" alt="Temperature Icon" width="24" height="24">
+                    <span>Current Temperature: {{ weather_data['data']['timelines'][0]['intervals'][0]['values']['temperature'] }}°C</span>
+                </div>
+            </div>
+        </div>
+        <div id="parameter-container">
+            <div id="parameter-controls">
+                <h2>Route Optimization</h2>
+                <div class="control-group">
+                    <label for="algorithm">Select Algorithm:</label>
+                    <select id="algorithm">
+                        <option value="ga">Genetic Algorithm</option>
+                        <option value="pso">Particle Swarm Optimization</option>
+                        <option value="aco">Ant Colony Optimization</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="num-trucks">Number of Trucks / Ants:</label>
+                    <input type="number" id="num-trucks" value="3">
+                </div>
+                <div class="control-group">
+                    <label for="iterations">Iterations / Generations:</label>
+                    <input type="number" id="iterations" value="50">
+                </div>
+                <div class="control-group">
+                    <label for="population-size">Population Size / Number of Particles:</label>
+                    <input type="number" id="population-size" value="10">
+                </div>
+                <div class="control-group">
+                    <label for="crossover">Crossover rate:</label>
+                    <input type="number" id="crossover" value="0.8">
+                </div>
+                <div class="control-group">
+                    <label for="mutation">Mutation rate:</label>
+                    <input type="number" id="mutation" value="0.02">
+                </div>
+                <div class="control-group">
+                    <label for="cog-co">Cognitive coefficent c1 (PSO):</label>
+                    <input type="number" id="cog-co" value="2">
+                </div>
+                <div class="control-group">
+                    <label for="soc-co">Social coefficient c2 (PSO):</label>
+                    <input type="number" id="soc-co" value="2">
+                </div>
+                <div class="control-group">
+                    <label for="inwe-start">Inertia Weight Start w (PSO):</label>
+                    <input type="number" id="inwe-start" value="0.9">
+                </div>
+                <div class="control-group">
+                    <label for="inwe-end">Inertia Weight End w (PSO):</label>
+                    <input type="number" id="inwe-end" value="0.4">
+                </div>
+                <div class="control-group">
+                    <label for="pher-imp">Pheromone importance α (ACO):</label>
+                    <input type="number" id="pher-imp" value="1">
+                </div>
+                <div class="control-group">
+                    <label for="dis-vis">Distance visibility β (ACO)</label>
+                    <input type="number" id="dis-vis" value="5">
+                </div>
+                <div class="control-group">
+                    <label for="pher-evp">Pheromone evaporation rate ρ (ACO):</label>
+                    <input type="number" id="pher-evp" value="0.5">
+                </div>
+                <div class="control-group">
+                    <label for="prob-par">Probability parameter q0 (ACO):</label>
+                    <input type="number" id="prob-par" value="0.9">
+                </div>
+                <div class="control-group">
+                    <label for="traffic">Consider Traffic:</label>
+                    <input type="checkbox" id="traffic" name="traffic" checked>
+                </div>
+                <button onclick="optimizeRoute()">Optimize Route</button>
+                <div id="optimization-status"></div>
+            </div>
+            </div>
+            <div id="insights"></div>
+        </div>
+    </div>
+    <footer>
+        <p>Project by: Mees Peters</p>
+    </footer>
+    <script>
+        var map;
+        var directionsRenderers = [];
+        var chargingStationMarkers = [];
+
+        function initMap() {
+            map = new google.maps.Map(document.getElementById('map'), {
+                zoom: 10,
+                center: { lat: 42.6328, lng: -73.7563 },
+            });
+
+            var warehousePosition = { lat: 40.9339, lng: -73.900 };
+            var warehouseMarker = new google.maps.Marker({
+                position: warehousePosition,
+                map: map,
+                icon: '{{ url_for('static', filename='warehouse.png') }}',
+                title: 'Warehouse'
+            });
+
+            var loc_5 = {{ loc_5 | tojson | safe }};
+            loc_5.forEach(function(location) {
+                var marker = new google.maps.Marker({
+                    position: { lat: location.lat, lng: location.lng },
+                    map: map,
+                    icon: '{{ url_for('static', filename='customer.png') }}',
+                    title: "Customer Location"
+                });
+            });
+
+            var chargingStations = {{ charging_stations | tojson | safe }};
+            chargingStations.forEach(station => {
+                var marker = new google.maps.Marker({
+                    position: {lat: station.lat, lng: station.lng},
+                    map: map,
+                    icon: '{{ url_for('static', filename='ev_stat_old.png') }}',
+                    title: 'Charging Station'
+                });
+                chargingStationMarkers.push(marker);
+            });
+            
+            var legend = document.getElementById('legend');
+            map.controls[google.maps.ControlPosition.RIGHT_BOTTOM].push(legend);
+        }
+
+        function optimizeRoute() {
+            var statusElement = document.getElementById('optimization-status');
+            statusElement.textContent = 'Optimizing...';
+            var algorithm = document.getElementById('algorithm').value;
+            var numTrucks = parseInt(document.getElementById('num-trucks').value);
+            var iterations = parseInt(document.getElementById('iterations').value);
+            var considerTraffic = document.getElementById('traffic').checked;
+
+            var queryParams = iterations=${iterations}&num_trucks=${numTrucks}&traffic=${considerTraffic};
+
+            // Append parameters based on the sleected algorithm 
+            if (algorithm == 'ga') {
+                var populationSize = parseInt(document.getElementById('population-size').value);
+                var crossover = parseFloat(document.getElementById('crossover').value);
+                var mutation = parseFloat(document.getElementById('mutation').value);
+                queryParams += &population_size=${populationSize}&crossover=${crossover}&mutation=${mutation};
+            } else if (algorithm == 'pso') {
+                var populationSize = parseInt(document.getElementById('population-size').value);
+                var cog_co = parseFloat(document.getElementById('cog-co').value);
+                var soc_co = parseFloat(document.getElementById('soc-co').value);
+                var inwe_start = parseFloat(document.getElementById('inwe-start').value);
+                var inwe_end = parseFloat(document.getElementById('inwe-end').value);
+                queryParams += &population_size=${populationSize}&cog_co=${cog_co}&soc_co=${soc_co}&inwe_start=${inwe_start}&inwe_end=${inwe_end};
+            } else if (algorithm == 'aco') {
+                var pher_imp = parseFloat(document.getElementById('pher-imp').value);
+                var dis_vis = parseFloat(document.getElementById('dis-vis').value);
+                var pher_evap = parseFloat(document.getElementById('pher-evp').value);
+                var prob_par = parseFloat(document.getElementById('prob-par').value);
+                queryParams += &pher_imp=${pher_imp}&dis_vis=${dis_vis}&pher_evap=${pher_evap}&prob_par=${prob_par};
+            }
+
+            var apiUrl = '';
+            if (algorithm === 'ga') {
+                apiUrl = '/optimize_route_ga';
+            } else if (algorithm === 'pso') {
+                apiUrl = '/optimize_route_pso';
+            } else if (algorithm === 'aco') {
+                apiUrl = '/optimize_route_aco';
+            }
+
+            fetch(${apiUrl}?${queryParams})
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Optimization data: ', data);
+                    updateMapWithVisitedStations(data.visited_stations);
+                    // Clear existing directions renderers
+                    directionsRenderers.forEach(renderer => renderer.setMap(null));
+                    directionsRenderers = [];
+
+                    if (!data.best_routes) {
+                        window.alert('No routes found for the fleet.');
+                        return;
+                    }
+
+                    Object.keys(data.best_routes).forEach(truckId => {
+                        var truckRoute = data.best_routes[truckId].route.split(' -> ');
+                        displayRoute(truckRoute, truckId);
+                    });
+
+                    statusElement.textContent = 'Optimization finished';
+                });
+        }
+
+        function updateMapWithVisitedStations(visitedStations) {
+            // Clear all existing charging station markers
+            chargingStationMarkers.forEach(marker => marker.setMap(null));
+            chargingStationMarkers = [];
+
+            // Flatten the list of visited stations since it's nested
+            let allVisitedStations = [].concat(...Object.values(visitedStations));
+
+            // Add new markers for visited charging stations
+            allVisitedStations.forEach(station => {
+                var marker = new google.maps.Marker({
+                    position: {lat: station.lat, lng: station.lng},
+                    map: map,
+                    icon: '{{ url_for('static', filename='ev_stat_old.png') }}',
+                    title: 'Visited Charging Station'
+                });
+                chargingStationMarkers.push(marker);
+            });
+        }
+
+        function displayRoute(route, truckId) {
+            var waypoints = route.slice(1, -1).map(location => ({
+                location: location,
+                stopover: true
+            }));
+
+            var directionsService = new google.maps.DirectionsService();
+            var directionsRenderer = new google.maps.DirectionsRenderer({ suppressMarkers: true });
+            directionsRenderer.setMap(map);
+
+            // Define a list of colors for different trucks
+            var colors = ['#FF5733', '#3498DB', '#27AE60', '#F1C40F', '#8E44AD', '#2ECC71', '#E67E22', '#16A085', '#2980B9', '#D35400'];
+            var truckIndex = parseInt(truckId.replace('Truck ', ''));
+
+            // Log the truckId, truckIndex, and color
+            console.log(Truck ID: ${truckId}, Index: ${truckIndex}, Color: ${colors[truckIndex % colors.length]});
+
+            directionsRenderer.setOptions({
+                polylineOptions: {
+                    strokeColor: colors[truckIndex % colors.length],
+                    strokeWeight: 6  // Increased line width for better visibility
+                }
+            });
+
+            directionsService.route({
+                origin: route[0],
+                destination: route[route.length - 1],
+                waypoints: waypoints,
+                optimizeWaypoints: false,
+                travelMode: google.maps.TravelMode.DRIVING
+            }, (response, status) => {
+                if (status === 'OK') {
+                    directionsRenderer.setDirections(response);
+                    directionsRenderers.push(directionsRenderer);
+                } else {
+                    window.alert('Directions request failed due to ' + status);
+                }
+            });
+        }
+</script>
+</body>
+</html>
